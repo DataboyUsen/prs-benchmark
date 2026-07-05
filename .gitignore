@@ -23,6 +23,7 @@ wheels/
 # R
 .Rhistory
 .RData
+.rds
 
 
 # Virtual environments
