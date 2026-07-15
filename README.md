@@ -175,7 +175,7 @@ results/CT/test_rmse.png   # RMSE across thresholds, test set
 
 ---
 
-### Step 3: LDpred2
+### Step 3: LDpred2 and Lassosum2
 
 Runs LDpred2-grid on the base set genotype and GWAS summary statistics. Automatically detects whether rsID is available in the GWAS data; if not, falls back to position-based matching with HapMap3. Evaluates PRS performance on both validation and test sets. At the same time, a lassosum2-grid (defult 120 parameter combinations) will also be trained on base set. 
 
