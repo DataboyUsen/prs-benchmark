@@ -15,7 +15,7 @@ defaults <- list(
   data_dir     = "results/intermediate_data",
   gwas_file    = " ",
   hm3_dir      = "data/map_hm3_plus.rds",
-  out_dir      = "data/results/LDPred2",
+  out_dir      = "results",
   val_prefix   = "val",
   test_prefix  = "test",
   covar_col    = " ",
@@ -29,27 +29,27 @@ defaults <- list(
 parse_args <- function(defaults) {
   args <- commandArgs(trailingOnly = TRUE)
   params <- defaults  
-
+  
   if (length(args) > 0) {
     if (length(args) %% 2 != 0) stop("Arguments must be in --key value pairs")
     keys <- gsub("^--", "", args[seq(1, length(args), 2)])
     vals <- args[seq(2, length(args), 2)]
-
+    
     # check if parameter name is correct
     invalid <- setdiff(keys, names(defaults))
     if (length(invalid) > 0) {
       stop(paste("Unknown argument(s):", paste(invalid, collapse = ", "),
                  "\nValid arguments:", paste(names(defaults), collapse = ", ")))
     }
-
+    
     for (i in seq_along(keys)) {
       params[[keys[i]]] <- vals[i]
     }
   }
-
+  
   params$maf_thr      <- as.numeric(params$maf_thr)
   params$random_state <- as.integer(params$random_state)
-
+  
   return(params)
 }
 params <- parse_args(defaults)
@@ -209,7 +209,7 @@ cat("Done! Size of LD matrix:", file.size(corr$sbk) / 1024^3,
 # ── grid search ───────────────────────────────────────────────
 ## get estimated h2
 ldsc <- with(df_beta, snp_ldsc(ld, length(ld), chi2 = (beta / beta_se)^2,
-                                sample_size = n_eff, blocks = NULL))
+                               sample_size = n_eff, blocks = NULL))
 h2_est <- ldsc[["h2"]]
 if (h2_est < 0){
   h2_est <- 0.1 # h2_est should be positive, if sample generates a negative one, we replace it with a small value
@@ -282,7 +282,8 @@ for (i in 1:ncol(beta_grid)) {
 best_idx <- which.max(abs(val_corr_list))
 
 # ── plot ──────────────────────────────────────────────────────
-dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
+LDPred2_dir <- file.path(out_dir, "LDPred2")
+dir.create(LDPred2_dir, recursive = TRUE, showWarnings = FALSE)
 
 make_plot <- function(plt_data, y_col, y_lab, title, best_idx, sub_title, baseline = NULL) {
   p <- ggplot(plt_data, aes(x = p, y = .data[[y_col]], color = as.factor(h2))) +
@@ -327,6 +328,104 @@ plots <- list(
 )
 
 for (name in names(plots)) {
-  ggsave(paste0(out_dir, "/", name, ".png"), plot = plots[[name]],
+  ggsave(paste0(LDPred2_dir, "/", name, ".png"), plot = plots[[name]],
+         width = 30, height = 15, units = "cm", dpi = 300)
+}
+
+
+# ── lassosum ─────────────────────────────────────────────────
+lassosum_dir <- file.path(out_dir, "lassosum")
+dir.create(lassosum_dir, recursive = TRUE, showWarnings = FALSE)
+## train the effect weights 
+beta_lassosum2 <- snp_lassosum2(corr, df_beta, ncores = NCORES)
+params2 <- attr(beta_lassosum2, "grid_param")
+
+## make PRS estimation
+val_pred_grid <- big_prodMat(val_G, beta_lassosum2, ind.col = df_beta[["_NUM_ID_"]])
+y_val <- val_data[[pheno_name]]
+y_test <- test_data[[pheno_name]]
+test_pred_grid <- big_prodMat(test_G, beta_lassosum2, ind.col = df_beta[["_NUM_ID_"]])
+
+
+## evaluation
+val_corr_list  <- c()
+val_rmse_list  <- c()
+test_corr_list <- c()
+test_rmse_list <- c()
+for (i in 1:ncol(beta_lassosum2)) {
+  if (all(is.na(val_pred_grid[, i]))) {
+    val_corr_list  <- c(val_corr_list,  NA)
+    val_rmse_list  <- c(val_rmse_list,  NA)
+    test_corr_list <- c(test_corr_list, NA)
+    test_rmse_list <- c(test_rmse_list, NA)
+    next
+  }
+  
+  # validation: fit calibration model
+  val_df <- val_data[, -which(names(val_data) == "IID")]
+  val_df$PRS <- val_pred_grid[, i]
+  mod <- lm(as.formula(paste(pheno_name, "~ .")), data = val_df)
+  
+  val_pred   <- predict(mod)
+  val_corr   <- cor(y_val, val_df$PRS)
+  val_rmse   <- sqrt(mean((y_val - val_pred)^2))
+  val_corr_list <- c(val_corr_list, val_corr)
+  val_rmse_list <- c(val_rmse_list, val_rmse)
+  
+  # test: predict using calibration model
+  test_df <- test_data[, -which(names(test_data) %in% c("IID", pheno_name))]
+  test_df$PRS <- test_pred_grid[, i]
+  test_pred  <- predict(mod, newdata = test_df)
+  test_corr  <- cor(y_test, test_df$PRS)
+  test_rmse  <- sqrt(mean((y_test - test_pred)^2))
+  test_corr_list <- c(test_corr_list, test_corr)
+  test_rmse_list <- c(test_rmse_list, test_rmse)
+}
+best_idx <- which.max(abs(val_corr_list))
+
+## plot
+make_plot <- function(plt_data, y_col, y_lab, title, best_idx, sub_title, baseline = NULL) {
+  p <- ggplot(plt_data, aes(x = lambda, y = .data[[y_col]], color = as.factor(delta))) +
+    theme_bigstatsr() +
+    geom_point() +
+    geom_line() +
+    geom_point(data = plt_data[best_idx, ],
+               color = "red", size = 4, shape = 4) +
+    scale_x_log10(breaks = 10^(-5:0), minor_breaks = plt_data$lambda) +
+    labs(title = title,
+         subtitle = paste0(sub_title, " = ",
+                           round(plt_data[[y_col]][best_idx], 4)),
+         y = y_lab, x = "lambda", color = "delta") +
+    theme(legend.position = "top", panel.spacing = unit(1, "lines"))
+  
+  if (!is.null(baseline)) {
+    p <- p + geom_hline(yintercept = baseline, linetype = "dashed",
+                        color = "black", linewidth = 0.8) +
+      annotate("text", x = min(plt_data$lambda), y = baseline,
+               label = paste0("baseline=", round(baseline, 4)),
+               vjust = -0.5, hjust = 0, size = 3)
+  }
+  return(p)
+}
+
+val_plt_data  <- cbind(params2, corr = val_corr_list,  rmse = val_rmse_list)
+test_plt_data <- cbind(params2, corr = test_corr_list, rmse = test_rmse_list)
+
+plots <- list(
+  val_corr  = make_plot(val_plt_data,  "corr", "Correlation(Pheno & PRS)", "Validation - Correlation", 
+                        best_idx, "best correlation"),
+  
+  val_rmse  = make_plot(val_plt_data,  "rmse", "RMSE",                     "Validation - RMSE",        
+                        best_idx, "best RMSE from validation", baseline = val_base_rmse),
+  
+  test_corr = make_plot(test_plt_data, "corr", "Correlation(Pheno & PRS)", "Test - Correlation",       
+                        best_idx, "best correlation from validation"),
+  
+  test_rmse = make_plot(test_plt_data, "rmse", "RMSE",                     "Test - RMSE",              
+                        best_idx, "best RMSE from validation", baseline = test_base_rmse)
+)
+
+for (name in names(plots)) {
+  ggsave(paste0(lassosum_dir, "/", name, ".png"), plot = plots[[name]],
          width = 30, height = 15, units = "cm", dpi = 300)
 }

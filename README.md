@@ -177,14 +177,14 @@ results/CT/test_rmse.png   # RMSE across thresholds, test set
 
 ### Step 3: LDpred2
 
-Runs LDpred2-grid on the base set genotype and GWAS summary statistics. Automatically detects whether rsID is available in the GWAS data; if not, falls back to position-based matching with HapMap3. Evaluates PRS performance on both validation and test sets.
+Runs LDpred2-grid on the base set genotype and GWAS summary statistics. Automatically detects whether rsID is available in the GWAS data; if not, falls back to position-based matching with HapMap3. Evaluates PRS performance on both validation and test sets. At the same time, a lassosum2-grid (defult 120 parameter combinations) will also be trained on base set. 
 
 ```bash
-Rscript pipeline/3_ldpred2.R \
+Rscript pipeline/3_ldpred2_lassosum.R \
   --data_dir results/intermediate_data \
   --gwas_file gwas_result.<pheno_name>.glm.linear \
   --hm3_dir data/map_hm3_plus.rds \
-  --out_dir results/LDPred2 \
+  --out_dir results \
   --val_prefix val \
   --test_prefix test \
   --pheno_name <pheno_name> \
@@ -224,6 +224,10 @@ results/LDPred2/val_corr.png     # correlation across grid, validation set
 results/LDPred2/val_rmse.png     # RMSE across grid, validation set
 results/LDPred2/test_corr.png    # correlation across grid, test set
 results/LDPred2/test_rmse.png    # RMSE across grid, test set
+results/lassosum/val_corr.png    # correlation across grid, validation set
+results/lassosum/val_rmse.png    # RMSE across grid, validation set
+results/lassosum/test_corr.png   # correlation across grid, test set
+results/lassosum/test_rmse.png   # RMSE across grid, test set
 results/intermediate_data/snps_after_shrink.csv      # SNP list after HapMap3
 ```
 

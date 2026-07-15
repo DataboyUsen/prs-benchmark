@@ -52,6 +52,7 @@ output/
 *.bed
 *.bim
 *.fam
+*.txt
 
 # OS files
 .DS_Store
